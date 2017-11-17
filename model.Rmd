@@ -1,0 +1,126 @@
+---
+title: "Titanic prediction model"
+author: "Yoan Bidart"
+date: "11/16/2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Introduction
+
+For this analysis about Titanic survival on Kaggle, we will first do an exploratory analysis of the data. Then we will clean the dataset and create new interesting variables for prediction. Finally we will create a prediction model using RandomForest and submit the predicted values.
+
+#Preprocessing
+
+##Load and visualise the data
+```{r message=FALSE}
+library(ggplot2)
+library(dplyr)
+library(caret)
+allData <- read.csv("train.csv", stringsAsFactors = FALSE)
+str(allData)
+```
+We have 891 observations of 12 variable, and our aim is to predict the Survival state 1 or 0.
+
+##Preprocessing
+After looking carefully at each variable (not included in this report as it would make it quite long for an easy reading), we find some interesting points to model our data, and created a preProcess function.
+
+###Names
+```{r}
+head(allData$Name)
+```
+
+For prediction model we can use an interesting thing in this feature : the title , some are in french and need to be translated, and noble titles can be useful for predicting survival.
+The full names will be removed.
+
+###Age
+```{r}
+table(is.na(allData$Age))
+```
+We choose to replace NA by the median value of the variable
+
+###Cabin, Ticket
+```{r}
+table(allData$Cabin=="")
+```
+As more than the half of Cabin values are empty, we will remove this column for the prediction. As we have also the fare and the class we can assume that these values are highly linked to the cabin. Ticket number will also be removed for the prediction model.
+
+###preProcess function
+The function aggregate these steps for an easy use.
+```{r}
+preProcess <- function(x) {
+        temp <- strsplit(as.character(x$Name), ", ")
+        #Title
+        title <- NULL
+        for (i in 1:length(temp)) {
+                temp2 <- strsplit(temp[[i]][2], " ")
+                temp3 <- temp2[[1]][1]
+                title <- c(title, temp3)
+        }
+        
+        wom <- c("Mme.|Ms.")
+        title <- gsub(wom, "Mrs.", title)
+        title <- gsub("Mlle.","Miss.", title)
+        highGrade <- c("Master.|Don.|Rev.|Dr.|Major.|Lady.|Sir.|Col.|Capt.|
+                       Jonkheer.|the")
+        title <- gsub(highGrade, "Noble.", title)
+        
+        x <- cbind(x, title)
+        
+        #Age
+        index <- is.na(x$Age)
+        x$Age[index] <- median(x$Age, na.rm=TRUE)
+        
+        #Cabin
+        x <- select(x, -c(Cabin, Ticket, Name))
+        
+        #classes
+        x$title <- as.character(x$title)
+        x
+}
+
+allData <- preProcess(allData)
+```
+
+##Create training and testing datasets
+We will use 70% of the data for the training set and 30% for the testing set.
+```{r}
+set.seed(12345)
+inTrain <- createDataPartition(allData$PassengerId, p=.7, list=FALSE)
+training <- allData[inTrain,]
+testing <- allData[-inTrain,]
+```
+
+##Prediction model
+We chose to use Random Forest for predicting the survival, to arrive at a theorical accuracy of roughly 83.3%. We tried a lot of ways including combining different models, but it showed no benefit for the accuracy.
+
+```{r}
+training$Survived <- as.factor(training$Survived)
+test1 <- select(testing, -Survived)
+#random forest model
+control <- trainControl(method="cv", number=3, verboseIter=FALSE)
+fit1 <- train(Survived~., data=training, method="rf", trControl=control)
+pred1 <- predict(fit1, test1)
+accu1 <- confusionMatrix(testing$Survived, pred1)
+accu1$overall
+```
+
+##Predicting and creating output
+Here we are ! Let's predict on the test.csv file to create our output for the Kaggle Competition.
+```{r}
+input <- read.csv("test.csv", stringsAsFactors = FALSE)
+input <- preProcess(input)
+#repairing a missing title and a missing fare
+input$title[415] <- "Mrs."
+input$Fare[153] <- median(input$Fare, na.rm=TRUE)
+output <- predict(fit1, input)
+
+#Write the solution to a file
+solution <- data.frame(PassengerId=input$PassengerId, Survived=output)
+write.csv(solution, file="solution.csv", row.names=FALSE)
+```
+
+Thank you for reading !
